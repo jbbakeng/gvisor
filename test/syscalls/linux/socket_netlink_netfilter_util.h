@@ -56,6 +56,16 @@ namespace testing {
 #define TABLE_NAME_SIZE 32
 #define VALID_USERDATA_SIZE 128
 
+struct ElementDescriptor {
+  std::vector<uint8_t> key;
+  std::vector<uint8_t> data;
+  uint32_t flags = 0;
+
+  bool operator==(const ElementDescriptor& other) const {
+    return key == other.key && data == other.data && flags == other.flags;
+  }
+};
+
 struct NfTableCheckOptions {
   const struct nlmsghdr* hdr;
   std::string test_table_name;
@@ -137,6 +147,14 @@ void AddDefaultTable(const AddDefaultTableOptions& options);
 // Helper function to add a default chain.
 void AddDefaultBaseChain(const AddDefaultBaseChainOptions& options);
 
+// Helper function to get set elements.
+PosixErrorOr<std::vector<ElementDescriptor>> GetSetElements(
+    const FileDescriptor& fd, absl::string_view table_name,
+    absl::string_view set_name, uint32_t seq);
+
+// Helper function to build a netlink set element attribute from a descriptor.
+std::vector<char> BuildNetlinkElement(const ElementDescriptor& desc);
+
 // Helper function to generate a batch netfilter request.
 PosixError NetlinkNetfilterBatchRequestAckOrError(const FileDescriptor& fd,
                                                   uint32_t seq_start,
@@ -146,6 +164,9 @@ PosixError NetlinkNetfilterBatchRequestAckOrError(const FileDescriptor& fd,
 // Helper function to delete a table.
 PosixError DestroyNetfilterTable(FileDescriptor& fd,
                                  absl::string_view table_name, int seq_num);
+
+// Helper function to flush all rules (deltable with unspec).
+PosixError NetfilterFlushRuleset();
 
 class NlBatchReq {
  public:
