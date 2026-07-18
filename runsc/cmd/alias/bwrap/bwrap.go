@@ -165,9 +165,26 @@ func (c *bwrapConfig) newMountOp(src, dst string, mountType MountOpType) (*Mount
 	}, nil
 }
 
+// CapOpType represents the type of capability operation.
+type CapOpType string
+
+const (
+	// CapOpDrop represents a capability drop operation.
+	CapOpDrop CapOpType = "drop"
+	// CapOpAdd represents a capability add operation.
+	CapOpAdd CapOpType = "add"
+)
+
+// CapOp represents a capability operation.
+type CapOp struct {
+	Type CapOpType
+	Cap  string
+}
+
 // bwrapConfig represents the configuration for the bwrap sandbox.
 type bwrapConfig struct {
 	Mounts       []*MountOp
+	CapOps       []*CapOp
 	UnshareNet   bool
 	Args         []string
 	Chdir        string
@@ -179,7 +196,6 @@ type bwrapConfig struct {
 	GID          int
 	UnshareUser  bool
 	Hostname     string
-	ShareNet     bool
 }
 
 // String returns a string representation of the bwrapConfig.
@@ -364,16 +380,33 @@ func (c *bwrapConfig) buildRunscSpec() (*specs.Spec, error) {
 		}
 	}
 
+	for _, capOp := range c.CapOps {
+		normCap, err := normalizeCap(capOp.Cap)
+		if err != nil {
+			return nil, err
+		}
+		switch capOp.Type {
+		case CapOpAdd:
+			addCapability(spec.Process.Capabilities, normCap)
+		case CapOpDrop:
+			dropCapability(spec.Process.Capabilities, normCap)
+		}
+	}
+
 	if c.Hostname != "" {
 		spec.Hostname = c.Hostname
 	}
 
-	// TODO: b/508701483 - Fix support for network args.
 	if c.UnshareNet {
 		if spec.Linux == nil {
 			spec.Linux = &specs.Linux{}
 		}
 		spec.Linux.Namespaces = append(spec.Linux.Namespaces, specs.LinuxNamespace{Type: specs.NetworkNamespace})
+		if c.runscConfig != nil {
+			c.runscConfig.Network = config.NetworkNone
+		}
+	} else {
+		// Todo: b/539664246 - Fix support for share-net network args.
 	}
 
 	// Set the current working directory.
@@ -466,4 +499,56 @@ func (c *bwrapConfig) resolveEnv() {
 		}
 	}
 	c.Env = env
+}
+
+func normalizeCap(capName string) (string, error) {
+	normCap := strings.ToUpper(strings.TrimSpace(capName))
+	if normCap != "ALL" {
+		if !strings.HasPrefix(normCap, "CAP_") {
+			normCap = "CAP_" + normCap
+		}
+		if !isKnownCapability(normCap) {
+			return "", fmt.Errorf("bwrap: unknown cap: %s", capName)
+		}
+	}
+	return normCap, nil
+}
+
+// isKnownCapability checks if capName is a valid Linux capability known to gVisor.
+func isKnownCapability(capName string) bool {
+	for _, c := range specutils.AllCapabilities().Bounding {
+		if c == capName {
+			return true
+		}
+	}
+	return false
+}
+
+// addCapability adds a single capability to all 5 capability sets.
+func addCapability(caps *specs.LinuxCapabilities, capName string) {
+	addUnique := func(set []string) []string {
+		for _, c := range set {
+			if c == capName {
+				return set
+			}
+		}
+		return append(set, capName)
+	}
+	caps.Bounding = addUnique(caps.Bounding)
+	caps.Effective = addUnique(caps.Effective)
+	caps.Inheritable = addUnique(caps.Inheritable)
+	caps.Permitted = addUnique(caps.Permitted)
+	caps.Ambient = addUnique(caps.Ambient)
+}
+
+func dropCapability(caps *specs.LinuxCapabilities, capName string) {
+	if capName == "ALL" {
+		caps.Bounding = nil
+		caps.Effective = nil
+		caps.Inheritable = nil
+		caps.Permitted = nil
+		caps.Ambient = nil
+		return
+	}
+	specutils.DropCapability(caps, capName)
 }
