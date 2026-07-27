@@ -555,7 +555,7 @@ bool NlReq::MsgTypeToken(const std::string& token) {
       {"newchain", NFT_MSG_NEWCHAIN}, {"getchain", NFT_MSG_GETCHAIN},
       {"delchain", NFT_MSG_DELCHAIN}, {"destroychain", NFT_MSG_DESTROYCHAIN},
       {"newrule", NFT_MSG_NEWRULE},   {"getrule", NFT_MSG_GETRULE},
-      {"getgen", NFT_MSG_GETGEN}};
+      {"delrule", NFT_MSG_DELRULE},   {"getgen", NFT_MSG_GETGEN}};
   auto it = token_to_msg_type.find(token);
   if (it != token_to_msg_type.end()) {
     EXPECT_FALSE(msg_type_set_) << "Message type already set: " << msg_type_;
@@ -896,6 +896,22 @@ PosixError DestroyNetfilterTable(FileDescriptor& fd,
   return NetlinkNetfilterBatchRequestAckOrError(fd, seq_num, seq_num + 2,
                                                 destroy_request_buffer.data(),
                                                 destroy_request_buffer.size());
+}
+
+PosixError NetfilterFlushRuleset() {
+  // Create a new socket for each flush request as
+  // the previous socket may be in a bad state at the end of the test.
+  ASSIGN_OR_RETURN_ERRNO(FileDescriptor flush_fd, NetfilterBoundSocket());
+  const uint32_t seq = 10000;
+  std::vector<char> flush_request =
+      NlBatchReq()
+          .SeqStart(seq)
+          .Req(NlReq("deltable req ack unspec").Seq(seq + 1).Build())
+          .SeqEnd(seq + 2)
+          .Build();
+
+  return NetlinkNetfilterBatchRequestAckOrError(
+      flush_fd, seq, seq + 2, flush_request.data(), flush_request.size());
 }
 
 }  // namespace testing
