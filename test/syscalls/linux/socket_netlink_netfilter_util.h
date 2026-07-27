@@ -147,6 +147,9 @@ PosixError NetlinkNetfilterBatchRequestAckOrError(const FileDescriptor& fd,
 PosixError DestroyNetfilterTable(FileDescriptor& fd,
                                  absl::string_view table_name, int seq_num);
 
+// Helper function to flush all rules (deltable with unspec).
+PosixError NetfilterFlushRuleset();
+
 class NlBatchReq {
  public:
   // Default constructor.
