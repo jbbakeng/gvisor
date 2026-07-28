@@ -1549,11 +1549,22 @@ TEST_F(Cgroup2Test, MemoryCurrent) {
 
   // Touch the memory to ensure it's actually allocated (faulted in).
   memset(mem, 1, kMemSize);
-  // Sleep to wait past the sentry's internal 10ms memory usage stats update
+  // Loop to wait past the sentry's internal 10ms memory usage stats update
   // throttle window (f.nextCommitScan in pgalloc.go).
-  absl::SleepFor(absl::Milliseconds(15));
-  const uint64_t usage_after =
-      ASSERT_NO_ERRNO_AND_VALUE(c().ReadIntegerControlFile("memory.current"));
+  uint64_t usage_after = 0;
+  const absl::Time deadline = absl::Now() + absl::Seconds(10);
+  while (true) {
+    absl::SleepFor(absl::Milliseconds(15));
+    usage_after =
+        ASSERT_NO_ERRNO_AND_VALUE(c().ReadIntegerControlFile("memory.current"));
+    if (usage_after >= usage + kMemSize - kMemFloorSlack &&
+        usage_after <= usage + kMemSize + kMemCeilingSlack) {
+      break;
+    }
+    if (absl::Now() >= deadline) {
+      break;
+    }
+  }
   EXPECT_GE(usage_after, usage + kMemSize - kMemFloorSlack);
   EXPECT_LE(usage_after, usage + kMemSize + kMemCeilingSlack);
 }
@@ -1583,13 +1594,24 @@ TEST_F(Cgroup2Test, MemoryIsChargedToNearestAncestorWithController) {
   ASSERT_NE(mem2, MAP_FAILED);
   auto clean_mem2 = Cleanup([&] { munmap(mem2, kMemSize); });
   memset(mem2, 1, kMemSize);
-  // Sleep to wait past the sentry's internal 10ms memory usage stats update
+  // Loop to wait past the sentry's internal 10ms memory usage stats update
   // throttle window (f.nextCommitScan in pgalloc.go).
-  absl::SleepFor(absl::Milliseconds(15));
+  uint64_t usage_child = 0;
+  const absl::Time deadline = absl::Now() + absl::Seconds(10);
+  while (true) {
+    absl::SleepFor(absl::Milliseconds(15));
+    usage_child = ASSERT_NO_ERRNO_AND_VALUE(
+        child.ReadIntegerControlFile("memory.current"));
+    if (usage_child >= base_usage_child + kMemSize - kMemFloorSlack &&
+        usage_child <= base_usage_child + kMemSize + kMemCeilingSlack) {
+      break;
+    }
+    if (absl::Now() >= deadline) {
+      break;
+    }
+  }
 
   // `child` should now reflect base_usage_child + kMemSize approximately.
-  const uint64_t usage_child =
-      ASSERT_NO_ERRNO_AND_VALUE(child.ReadIntegerControlFile("memory.current"));
   EXPECT_GE(usage_child, base_usage_child + kMemSize - kMemFloorSlack);
   EXPECT_LE(usage_child, base_usage_child + kMemSize + kMemCeilingSlack);
 
