@@ -252,6 +252,46 @@ class SandboxTest(unittest.TestCase):
       sandbox.Sandbox(enable_networking=False)
     self.assertIn("failed to create sandbox via subprocess", str(ctx.exception))
 
+  @mock.patch("subprocess.run")
+  def test_invalid_networking_mode(self, mock_run):  # pylint: disable=unused-argument
+    with self.assertRaises(ValueError) as ctx:
+      sandbox.Sandbox(network="invalid-net")
+    self.assertIn(
+        "Invalid network mode 'invalid-net'. Valid options are 'none',"
+        " 'sandbox', 'host', or None.",
+        str(ctx.exception),
+    )
+
+  @mock.patch("os.geteuid", return_value=0)
+  @mock.patch("subprocess.run")
+  def test_network_modes(self, mock_run, mock_geteuid):  # pylint: disable=unused-argument
+    mock_run.return_value = mock.Mock(returncode=0)
+    for net in ["none", "sandbox", "host"]:
+      mock_run.reset_mock()
+      sb = sandbox.Sandbox(network=net)
+      args = mock_run.call_args_list[0][0][0]
+      if net != "none":
+        self.assertIn(f"--network={net}", args)
+      else:
+        self.assertIn("--network=none", args)
+      sb.close()
+
+  @mock.patch("subprocess.run")
+  def test_rootless_mode(self, mock_run):
+    mock_run.return_value = mock.Mock(returncode=0)
+    sb = sandbox.Sandbox(rootless=True, enable_networking=True)
+    args = mock_run.call_args_list[0][0][0]
+    self.assertIn("--rootless", args)
+    self.assertIn("--ignore-cgroups", args)
+
+    config_path = os.path.join(sb.bundle_dir, "config.json")
+    with open(config_path, "r") as f:
+      spec = json.load(f)
+    namespaces = spec.get("linux", {}).get("namespaces", [])
+    namespace_types = {ns.get("type") for ns in namespaces}
+    self.assertIn("user", namespace_types)
+    sb.close()
+
   def test_find_runsc_not_found(self):
     old_runsc_path = os.environ.get("RUNSC_PATH")
     if "RUNSC_PATH" in os.environ:
