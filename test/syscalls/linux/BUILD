@@ -2837,6 +2837,7 @@ cc_library(
     hdrs = ["socket_unix_dgram.h"],
     deps = select_gtest() + [
         ":unix_domain_socket_test_util",
+        "//test/util:posix_error",
         "//test/util:socket_util",
         "//test/util:test_util",
         "@com_google_absl//absl/time",
@@ -2910,6 +2911,8 @@ cc_library(
         "//test/util:memory_util",
         "//test/util:socket_util",
         "//test/util:test_util",
+        "//test/util:thread_util",
+        "@com_google_absl//absl/time",
     ],
     alwayslink = 1,
 )
@@ -3193,9 +3196,11 @@ cc_binary(
     malloc = "//test/util:errno_safe_allocator",
     deps = select_gtest() + [
         ":unix_domain_socket_test_util",
+        "//test/util:posix_error",
         "//test/util:socket_util",
         "//test/util:test_main",
         "//test/util:test_util",
+        "//test/util:thread_util",
         "@com_google_absl//absl/time",
     ],
 )
@@ -3754,9 +3759,11 @@ cc_binary(
         "//test/util:socket_util",
         "//test/util:test_main",
         "//test/util:test_util",
+        "//test/util:thread_util",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/time",
     ],
 )
 
@@ -4029,9 +4036,12 @@ cc_binary(
     malloc = "//test/util:errno_safe_allocator",
     deps = select_gtest() + [
         ":unix_domain_socket_test_util",
+        "//test/util:posix_error",
         "//test/util:socket_util",
         "//test/util:test_main",
         "//test/util:test_util",
+        "//test/util:thread_util",
+        "@com_google_absl//absl/time",
     ],
 )
 
@@ -4095,9 +4105,12 @@ cc_binary(
     deps = select_gtest() + [
         ":ip_socket_test_util",
         ":socket_blocking_test_cases",
+        "//test/util:posix_error",
         "//test/util:socket_util",
         "//test/util:test_main",
         "//test/util:test_util",
+        "//test/util:thread_util",
+        "@com_google_absl//absl/time",
     ],
 )
 
@@ -4961,6 +4974,26 @@ cc_binary(
         "//test/util:test_util",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/strings",
+    ],
+)
+
+cc_binary(
+    name = "posix_acl_test",
+    testonly = 1,
+    srcs = ["posix_acl.cc"],
+    linkstatic = 1,
+    malloc = "//test/util:errno_safe_allocator",
+    deps = select_gtest() + [
+        "//test/util:capability_util",
+        "//test/util:cleanup",
+        "//test/util:file_descriptor",
+        "//test/util:fs_util",
+        "//test/util:posix_error",
+        "//test/util:temp_path",
+        "//test/util:test_main",
+        "//test/util:test_util",
+        "//test/util:thread_util",
+        "@com_google_absl//absl/time",
     ],
 )
 

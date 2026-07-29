@@ -460,8 +460,15 @@ func (q *queueReceiver) RecvNotify() {
 
 // CloseNotify implements Receiver.CloseNotify.
 func (q *queueReceiver) CloseNotify() {
-	q.readQueue.ReaderQueue.Notify(waiter.ReadableEvents)
-	q.readQueue.WriterQueue.Notify(waiter.WritableEvents)
+	// Include the hangup events: this closure may newly satisfy
+	// EventRdHUp/EventHUp for pollers that requested no data events, and
+	// notifications are filtered against the waiter's mask, so data
+	// events alone would never wake them. Over-notifying is harmless
+	// (woken waiters re-check readiness and sleep again if unready) and
+	// is what Linux does: sk_state_change() wakes all waiters on every
+	// shutdown or close.
+	q.readQueue.ReaderQueue.Notify(waiter.ReadableEvents | waiter.EventRdHUp | waiter.EventHUp)
+	q.readQueue.WriterQueue.Notify(waiter.WritableEvents | waiter.EventHUp)
 }
 
 // CloseRecv implements Receiver.CloseRecv.
@@ -796,8 +803,10 @@ func (e *connectedEndpoint) SendNotify() {
 
 // CloseNotify implements ConnectedEndpoint.CloseNotify.
 func (e *connectedEndpoint) CloseNotify() {
-	e.writeQueue.ReaderQueue.Notify(waiter.ReadableEvents)
-	e.writeQueue.WriterQueue.Notify(waiter.WritableEvents)
+	// Include the hangup events for hangup-only pollers; over-notifying
+	// is harmless (see queueReceiver.CloseNotify).
+	e.writeQueue.ReaderQueue.Notify(waiter.ReadableEvents | waiter.EventRdHUp | waiter.EventHUp)
+	e.writeQueue.WriterQueue.Notify(waiter.WritableEvents | waiter.EventHUp)
 }
 
 // CloseSend implements ConnectedEndpoint.CloseSend.
@@ -874,6 +883,12 @@ type baseEndpoint struct {
 	// path is not empty if the endpoint has been bound,
 	// or may be used if the endpoint is connected.
 	path string
+
+	// writeShutdown is true if the write side of the endpoint has been
+	// shut down without closing the peer's read side: sends fail with
+	// EPIPE, but the peer is unaffected. This is how shutdown(SHUT_WR)
+	// behaves on datagram sockets. Protected by endpointMutex.
+	writeShutdown bool
 
 	// ops is used to get socket level options.
 	ops tcpip.SocketOptions
@@ -968,6 +983,10 @@ func (e *baseEndpoint) SendMsg(ctx context.Context, data [][]byte, c ControlMess
 		e.Unlock()
 		return 0, nil, syserr.ErrAlreadyConnected
 	}
+	if e.writeShutdown {
+		e.Unlock()
+		return 0, nil, syserr.ErrClosedForSend
+	}
 
 	connected := e.connected
 	n, notify, err := connected.Send(ctx, data, c, Address{Addr: e.path})
@@ -1057,6 +1076,14 @@ func (e *baseEndpoint) SocketOptions() *tcpip.SocketOptions {
 // Shutdown closes the read and/or write end of the endpoint connection to its
 // peer.
 func (e *baseEndpoint) Shutdown(flags tcpip.ShutdownFlags) *syserr.Error {
+	return e.shutdown(flags, true /* closePeerRead */)
+}
+
+// shutdown implements shutdown(2). If closePeerRead is true, shutting down
+// the write side also closes the peer's read side, the way Linux does for
+// stream and seqpacket sockets. Datagram sockets pass false: the peer is
+// unaffected, and only local sends start failing.
+func (e *baseEndpoint) shutdown(flags tcpip.ShutdownFlags, closePeerRead bool) *syserr.Error {
 	e.Lock()
 	if !e.Connected() {
 		e.Unlock()
@@ -1073,7 +1100,10 @@ func (e *baseEndpoint) Shutdown(flags tcpip.ShutdownFlags) *syserr.Error {
 		r.CloseRecv()
 	}
 	if shutdownWrite {
-		c.CloseSend()
+		e.writeShutdown = true
+		if closePeerRead {
+			c.CloseSend()
+		}
 	}
 	e.Unlock()
 
@@ -1082,7 +1112,15 @@ func (e *baseEndpoint) Shutdown(flags tcpip.ShutdownFlags) *syserr.Error {
 		r.CloseNotify()
 	}
 	if shutdownWrite {
-		c.CloseNotify()
+		if closePeerRead {
+			c.CloseNotify()
+		} else {
+			// Wake up any local writers, and hangup-only pollers in
+			// case this write shutdown completed EventHUp;
+			// over-notifying is harmless (see
+			// queueReceiver.CloseNotify).
+			e.Queue.Notify(waiter.WritableEvents | waiter.EventHUp)
+		}
 	}
 
 	return nil

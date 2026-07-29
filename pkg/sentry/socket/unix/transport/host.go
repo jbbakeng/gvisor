@@ -215,7 +215,7 @@ func (c *HostConnectedEndpoint) CloseSend() {
 
 // Preconditions: c.mu must be held.
 func (c *HostConnectedEndpoint) closeSendLocked() {
-	if c.IsSendClosed() {
+	if c.wrShutdown.Load() {
 		return
 	}
 
@@ -232,7 +232,17 @@ func (c *HostConnectedEndpoint) CloseNotify() {}
 
 // IsSendClosed implements ConnectedEndpoint.IsSendClosed.
 func (c *HostConnectedEndpoint) IsSendClosed() bool {
-	return c.wrShutdown.Load()
+	if c.wrShutdown.Load() {
+		return true
+	}
+	// Check if the underlying host socket is hung up (e.g. peer closed or
+	// both directions shut down).
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if c.fd < 0 {
+		return false
+	}
+	return fdnotifier.NonBlockingPoll(int32(c.fd), waiter.EventHUp)&waiter.EventHUp != 0
 }
 
 // Writable implements ConnectedEndpoint.Writable.
@@ -335,7 +345,7 @@ func (c *HostConnectedEndpoint) CloseRecv() {
 
 // Preconditions: c.mu must be held.
 func (c *HostConnectedEndpoint) closeRecvLocked() {
-	if c.IsRecvClosed() {
+	if c.rdShutdown.Load() {
 		return
 	}
 
@@ -349,7 +359,17 @@ func (c *HostConnectedEndpoint) closeRecvLocked() {
 
 // IsRecvClosed implements Receiver.IsRecvClosed.
 func (c *HostConnectedEndpoint) IsRecvClosed() bool {
-	return c.rdShutdown.Load()
+	if c.rdShutdown.Load() {
+		return true
+	}
+	// Check if the underlying host socket has a read hangup (e.g. peer shut
+	// down writing on a stream or seqpacket socket) or full hangup.
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if c.fd < 0 {
+		return false
+	}
+	return fdnotifier.NonBlockingPoll(int32(c.fd), waiter.EventRdHUp|waiter.EventHUp)&(waiter.EventRdHUp|waiter.EventHUp) != 0
 }
 
 // Readable implements Receiver.Readable.
